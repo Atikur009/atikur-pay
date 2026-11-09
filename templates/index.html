@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <div class="container">
+    <div class="badge-mode">No API key needed — auto-verified by bKash SMS</div>
+    <h1>Accept bKash, Nagad, Rocket<br>and more on your website</h1>
+    <p>Atikur Pay is a payment gateway for Bangladeshi businesses. Your customers send money to your bKash number, enter the TrxID, and the payment is verified automatically — no API key, no merchant account needed.</p>
+    <div class="cta-row">
+      <a class="btn" href="{{ url_for('signup') }}">Create free account</a>
+      <a class="btn btn-outline" href="{{ url_for('docs') }}">Read API docs</a>
+    </div>
+  </div>
+</section>
+
+<div class="container">
+  <h2 class="section-title">How it works</h2>
+  <p class="section-sub">Four steps and you are accepting payments.</p>
+  <div class="steps">
+    <div class="step"><div class="num">1</div><h3>Sign up</h3><p>Create your free merchant account in under a minute.</p></div>
+    <div class="step"><div class="num">2</div><h3>Add your bKash number</h3><p>Enter the bKash number customers should send money to. Add Nagad, Rocket and more the same way.</p></div>
+    <div class="step"><div class="num">3</div><h3>Get your API key</h3><p>Use the API or share your checkout link from your website or app.</p></div>
+    <div class="step"><div class="num">4</div><h3>Get paid — auto-verified</h3><p>Your customer pays via bKash Send Money and enters the TrxID. Our SMS checker matches the TrxID, amount and sender — and marks the payment paid automatically.</p></div>
+  </div>
+
+  <h2 class="section-title">Payment methods</h2>
+  <p class="section-sub">bKash works today. More methods are coming — add your own numbers for them now.</p>
+  <div class="methods-row">
+    <span class="method-chip">bKash</span>
+    <span class="method-chip">Nagad</span>
+    <span class="method-chip">Rocket</span>
+    <span class="method-chip">Upay</span>
+    <span class="method-chip">MCash</span>
+    <span class="method-chip">TAP</span>
+    <span class="method-chip">Pathao Pay</span>
+    <span class="method-chip">Cellfin</span>
+  </div>
+
+  <h2 class="section-title">How verification works</h2>
+  <div class="fee-note">
+    <strong>No bKash API key. No merchant account. No waiting.</strong><br>
+    An Android app on your phone reads the incoming bKash SMS (amount, sender and TrxID) and forwards it to Atikur Pay. When your customer enters the TrxID at checkout, we match it against the SMS — same TrxID, same amount, same sender — and complete the payment. Your phone must stay on with internet for verification to work.
+  </div>
+
+  <div class="fee-note">
+    <strong>Fees.</strong> Atikur Pay charges no extra fee. bKash's own charges apply as per your bKash account.
+  </div>
+</div>
+{% endblock %}

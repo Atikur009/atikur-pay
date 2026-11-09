@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: atikur-pay
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn wsgi:app
+    envVars:
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: ADMIN_SECRET
+        generateValue: true
+      - key: SMS_INGEST_SECRET
+        sync: false
+      - key: PLATFORM_BKASH_NUMBER
+        value: "01723502619"
+      - key: DATABASE_URL
+        sync: false

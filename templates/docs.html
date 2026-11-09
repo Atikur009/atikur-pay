@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}API Docs — Atikur Pay{% endblock %}
+{% block content %}
+<div class="container" style="padding-top:10px">
+  <h1>API documentation</h1>
+  <p class="muted">Create payments from your website or app, and let customers pay via bKash Send Money with TrxID verification. No bKash API key needed.</p>
+
+  <div class="card">
+    <h2>Authentication</h2>
+    <p>Generate an API key in your <a href="{{ url_for('dashboard') }}">dashboard</a> and send it in the <code>X-API-Key</code> header with every request.</p>
+    <pre>X-API-Key: ap_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</pre>
+  </div>
+
+  <div class="card">
+    <h2>Create a payment</h2>
+    <p><code>POST /api/v1/create-payment</code></p>
+    <pre>{
+  "amount": 128.55,
+  "currency": "BDT",
+  "merchantInvoiceNumber": "ORDER-123",
+  "customerRef": "customer@example.com",
+  "callbackURL": "https://your-site.com/payment-done"
+}</pre>
+    <p>Response (201):</p>
+    <pre>{
+  "payment_id": "AP9F2C...",
+  "payment_url": "https://pay.atikur.cyou/pay/AP9F2C...",
+  "amount": 128.55,
+  "currency": "BDT",
+  "status": "pending"
+}</pre>
+    <p>Send your customer to <code>payment_url</code>. They send the money via bKash, enter the TrxID, and the payment is auto-verified.</p>
+  </div>
+
+  <div class="card">
+    <h2>Check payment status</h2>
+    <p><code>GET /api/v1/payment/status?payment_id=AP9F2C...</code></p>
+    <pre>{
+  "payment_id": "AP9F2C...",
+  "status": "paid",
+  "amount": 128.55,
+  "currency": "BDT",
+  "method": "bkash",
+  "trx_id": "9HX7K2M4P1",
+  "merchant_invoice_number": "ORDER-123"
+}</pre>
+    <p>Statuses: <code>pending</code>, <code>paid</code>, <code>failed</code>, <code>cancelled</code>.</p>
+  </div>
+
+  <div class="card">
+    <h2>SMS ingest (Android app)</h2>
+    <p>The Android app on the merchant's phone forwards incoming bKash SMS here, so TrxIDs can be verified automatically.</p>
+    <p><code>POST /api/sms</code></p>
+    <p>Headers:</p>
+    <pre>X-SMS-Secret: &lt;SMS ingest secret&gt;
+X-API-Key: &lt;merchant API key&gt;
+Content-Type: application/json</pre>
+    <p>Body:</p>
+    <pre>{
+  "sender": "01712345678",
+  "amount": 128.55,
+  "trx_id": "9HX7K2M4P1",
+  "sms_text": "You have received Tk 128.55 from 01712345678...",
+  "method": "bkash"
+}</pre>
+    <p>Response (201): <code>{"status": "stored", "trx_id": "9HX7K2M4P1"}</code>. Sending the same TrxID again returns <code>{"status": "duplicate"}</code> — ingest is idempotent.</p>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Pay {{ '%.2f'|format(payment.amount) }} BDT — Atikur Pay{% endblock %}
+{% block content %}
+<div class="pay-head">
+  <div class="container row">
+    <div>
+      <div class="who">Pay {{ merchant_name }}</div>
+      <div class="title">{{ payment.merchant_invoice_number or 'Payment' }}</div>
+    </div>
+    <div class="amount">
+      <div class="cur">BDT</div>
+      <div class="val">{{ '%.2f'|format(payment.amount) }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="narrow" style="max-width:640px">
+  <div class="steps-bar">
+    <div class="step-dot done">✓</div>
+    <div class="step-line done"></div>
+    <div class="step-dot now">2</div>
+    <div class="step-line"></div>
+    <div class="step-dot">3</div>
+  </div>
+  <div class="step-labels" style="gap:0">
+    <span style="width:130px;text-align:center">Details</span>
+    <span class="on" style="width:130px;text-align:center">Method</span>
+    <span style="width:130px;text-align:center">Result</span>
+  </div>
+
+  <h2 style="margin:18px 0 0">Choose how to pay</h2>
+
+  <div class="tabs">
+    <button class="tab" type="button" onclick="showTab(this,'card')">💳 Card</button>
+    <button class="tab active" type="button" onclick="showTab(this,'mfs')">📱 MFS</button>
+    <button class="tab" type="button" onclick="showTab(this,'banking')">🏦 Banking</button>
+  </div>
+  <div id="tab-card" style="display:none" class="card"><p class="muted">Card payments are coming soon.</p></div>
+  <div id="tab-banking" style="display:none" class="card"><p class="muted">Banking payments are coming soon.</p></div>
+
+  <div id="tab-mfs">
+    <div class="method-group">bKash</div>
+    {% if bkash_number %}
+    <button type="button" class="method-card selected" id="card-bkash" onclick="selectMethod('bkash')">
+      <span class="method-logo bkash">bKash</span>
+      <span class="method-name">bKash Payment</span>
+      <span class="tag live">Live</span>
+      <span class="method-radio"></span>
+    </button>
+
+    <div class="card" id="bkash-panel" style="margin-top:6px">
+      <h3>Pay with bKash Send Money</h3>
+      <p>1. Open your bKash app and <strong>Send Money</strong> to this number:</p>
+      <p style="font-size:26px;font-weight:800;letter-spacing:1px">{{ bkash_number }}</p>
+      <p>Amount: <strong>৳{{ '%.2f'|format(payment.amount) }} BDT</strong> (exact amount)</p>
+      <p>2. After sending, enter your bKash number and the TrxID from the SMS:</p>
+      <form method="post" action="{{ url_for('checkout_verify', public_id=payment.public_id) }}">
+        <input type="hidden" name="method" value="bkash">
+        <label for="phone">Your bKash number</label>
+        <input type="tel" id="phone" name="phone" placeholder="01XXXXXXXXX" required>
+        <label for="trx_id">TrxID (from the bKash SMS)</label>
+        <input type="text" id="trx_id" name="trx_id" placeholder="e.g. 9HX7K2M4P1" required style="text-transform:uppercase">
+        <button class="btn btn-block pay-btn" type="submit">Verify Payment — ৳{{ '%.2f'|format(payment.amount) }} BDT</button>
+      </form>
+      <p class="muted" style="margin-top:10px">We match the TrxID, amount and your number against the bKash SMS automatically. If it says "not received yet", wait a moment for the SMS and try again.</p>
+    </div>
+    {% else %}
+    <div class="card"><p class="muted">bKash is not set up for this merchant yet. Please contact the merchant.</p></div>
+    {% endif %}
+
+    <div class="method-group">Other MFS</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      {% for code, label, short in mfs_methods %}
+      {% if code != 'bkash' %}
+      <div class="method-card disabled">
+        <span class="method-logo other">{{ short[:2] }}</span>
+        <span class="method-name">{{ label }}</span>
+        {% if code in configured %}<span class="tag saved">Saved</span>{% else %}<span class="tag soon">Soon</span>{% endif %}
+      </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+    <p class="muted" style="margin-top:14px">Choose a payment method to see what you pay.</p>
+  </div>
+</div>
+<script>
+function showTab(btn, name) {
+  document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
+  btn.classList.add('active');
+  document.getElementById('tab-card').style.display = name === 'card' ? 'block' : 'none';
+  document.getElementById('tab-banking').style.display = name === 'banking' ? 'block' : 'none';
+  document.getElementById('tab-mfs').style.display = name === 'mfs' ? 'block' : 'none';
+}
+function selectMethod(m) {
+  document.querySelectorAll('.method-card').forEach(function(c){ c.classList.remove('selected'); });
+  var el = document.getElementById('card-' + m);
+  if (el) el.classList.add('selected');
+}
+</script>
+{% endblock %}

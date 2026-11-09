@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Atikur Pay{% endblock %}
+{% block content %}
+<div class="container" style="padding-top:10px">
+  <h1 style="margin-bottom:4px">Dashboard</h1>
+  <p class="muted">Welcome, {{ merchant.name }} ({{ merchant.email }})</p>
+
+  <div class="stat-grid">
+    <div class="stat"><div class="v">{{ stats.total or 0 }}</div><div class="k">Total payments</div></div>
+    <div class="stat"><div class="v">{{ stats.paid_count or 0 }}</div><div class="k">Paid payments</div></div>
+    <div class="stat"><div class="v">৳{{ '%.2f'|format(stats.paid_volume or 0) }}</div><div class="k">Paid volume (BDT)</div></div>
+    <div class="stat"><div class="v">{{ sms_count }}</div><div class="k">SMS received</div></div>
+  </div>
+
+  {% if new_api_key %}
+  <div class="secret-box">
+    <strong>Your new API key (copy it now — the secret is shown only once):</strong><br>
+    API key: <code>{{ new_api_key }}</code><br>
+    Secret: <code>{{ new_api_secret }}</code>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <h2>API keys</h2>
+    <p class="muted">Use these keys in your website or app to create payments. Send the key in the <code>X-API-Key</code> header.</p>
+    <form method="post" action="{{ url_for('create_api_key') }}" style="display:flex;gap:10px;flex-wrap:wrap">
+      <input type="text" name="label" placeholder="Key label (e.g. My website)" style="flex:1;min-width:200px">
+      <button class="btn" type="submit">Generate API key</button>
+    </form>
+    {% if keys %}
+    <table style="margin-top:14px">
+      <tr><th>Label</th><th>Key</th><th>Created</th><th>Last used</th><th></th></tr>
+      {% for k in keys %}
+      <tr>
+        <td>{{ k.label }}</td>
+        <td><code>{{ k.key_value[:14] }}…</code>{% if k.revoked %} <span class="tag soon">revoked</span>{% endif %}</td>
+        <td>{{ k.created_at }}</td>
+        <td>{{ k.last_used_at or '—' }}</td>
+        <td>{% if not k.revoked %}
+          <form method="post" action="{{ url_for('revoke_api_key', key_id=k.id) }}"><button class="btn btn-danger btn-sm" type="submit">Revoke</button></form>
+        {% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="muted">No API keys yet — generate one above.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Payment methods</h2>
+    <p class="muted">Add the numbers your customers should send money to. <strong>bKash works now</strong> — payments are auto-verified by SMS. Other methods are stored and will be enabled when processing goes live.</p>
+    {% for code, label, short in mfs_methods %}
+    {% set m = methods.get(code) %}
+    <form method="post" action="{{ url_for('save_method') }}" style="border-top:1px solid var(--line);padding-top:14px">
+      <input type="hidden" name="method" value="{{ code }}">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <strong style="min-width:140px">{{ label }}</strong>
+        {% if code == 'bkash' %}<span class="tag live">Live</span>
+        {% elif m %}<span class="tag saved">Number saved</span>
+        {% else %}<span class="tag soon">Soon</span>{% endif %}
+      </div>
+      <div class="grid2">
+        <div>
+          <label>{{ short }} number (customers send money here)</label>
+          <input type="tel" name="number" placeholder="01XXXXXXXXX" value="{{ m.creds.number if m else '' }}">
+        </div>
+        <div>
+          <label>Account name (optional)</label>
+          <input type="text" name="account_name" placeholder="e.g. Your shop name" value="{{ m.creds.account_name if m else '' }}">
+        </div>
+      </div>
+      <div style="margin-top:12px"><button class="btn btn-sm" type="submit">Save {{ short }}</button></div>
+    </form>
+    {% endfor %}
+    {% if platform_bkash %}
+    <p class="muted" style="margin-top:14px">Platform default bKash number: <code>{{ platform_bkash }}</code> (used when you have not set your own).</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>SMS auto-verification setup</h2>
+    <p class="muted">Install the Atikur Pay SMS app on the phone that has your bKash SIM. The app reads incoming bKash SMS and forwards them to this server, so TrxIDs are verified automatically. Your phone must stay on with internet.</p>
+    <p><strong>SMS endpoint:</strong> <code>POST /api/sms</code></p>
+    <p><strong>Headers:</strong> <code>X-SMS-Secret: &lt;your SMS ingest secret&gt;</code> and <code>X-API-Key: &lt;your API key&gt;</code></p>
+    <p><strong>Body (JSON):</strong></p>
+    <pre>{
+  "sender": "01712345678",
+  "amount": 128.55,
+  "trx_id": "9HX7K2M4P1",
+  "sms_text": "You have received Tk 128.55 from 01712345678...",
+  "method": "bkash"
+}</pre>
+  </div>
+
+  <div class="card">
+    <h2>Test the checkout</h2>
+    <p class="muted">Create a test payment and open its checkout page.</p>
+    <form method="post" action="{{ url_for('test_payment') }}" style="display:flex;gap:10px;flex-wrap:wrap">
+      <input type="number" name="amount" min="10" step="0.01" placeholder="Amount in BDT (min 10)" style="flex:1;min-width:200px" required>
+      <button class="btn" type="submit">Create test payment</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Transactions</h2>
+    {% if payments %}
+    <table>
+      <tr><th>Payment</th><th>Amount</th><th>Method</th><th>Status</th><th>TrxID</th><th>Customer</th><th>Created</th></tr>
+      {% for p in payments %}
+      <tr>
+        <td><a href="{{ url_for('checkout', public_id=p.public_id) }}">{{ p.public_id }}</a><br><span class="muted">{{ p.merchant_invoice_number }}</span></td>
+        <td>৳{{ '%.2f'|format(p.amount) }}</td>
+        <td>{{ p.method or '—' }}</td>
+        <td><span class="status {{ p.status }}">{{ p.status }}</span></td>
+        <td>{{ p.trx_id or '—' }}</td>
+        <td>{{ p.customer_phone or '—' }}</td>
+        <td>{{ p.created_at }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="muted">No payments yet.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

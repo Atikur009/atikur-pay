@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Payment {{ payment.status }} — Atikur Pay{% endblock %}
+{% block content %}
+<div class="narrow result-wrap" style="max-width:560px">
+  {% if payment.status == 'paid' %}
+    <div class="result-icon">✅</div>
+    <h1>Payment successful</h1>
+    <p>Your payment of <strong>৳{{ '%.2f'|format(payment.amount) }} BDT</strong> was verified and completed.</p>
+    <p class="muted">TrxID: <code>{{ payment.trx_id }}</code><br>Invoice: {{ payment.merchant_invoice_number }}</p>
+  {% elif payment.status == 'cancelled' %}
+    <div class="result-icon">🚫</div>
+    <h1>Payment cancelled</h1>
+    <p>This payment was cancelled. No money was taken.</p>
+  {% elif payment.status == 'failed' %}
+    <div class="result-icon">❌</div>
+    <h1>Payment failed</h1>
+    <p>We could not verify this payment. Please try again or contact the merchant.</p>
+    <p><a class="btn" href="{{ url_for('checkout', public_id=payment.public_id) }}">Try again</a></p>
+  {% else %}
+    <div class="result-icon">⏳</div>
+    <h1>Payment pending</h1>
+    <p>Your payment of <strong>৳{{ '%.2f'|format(payment.amount) }} BDT</strong> is still pending verification.</p>
+    <p><a class="btn" href="{{ url_for('checkout', public_id=payment.public_id) }}">Back to checkout</a></p>
+  {% endif %}
+  <p class="muted" style="margin-top:24px">Payment ID: <code>{{ payment.public_id }}</code></p>
+</div>
+{% endblock %}

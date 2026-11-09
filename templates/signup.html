@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Sign up — Atikur Pay{% endblock %}
+{% block content %}
+<div class="narrow">
+  <div class="card">
+    <h2>Create your merchant account</h2>
+    <p class="muted">Free. No documents needed to start.</p>
+    <form method="post">
+      <label for="name">Your name / Business name</label>
+      <input type="text" id="name" name="name" required>
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" required>
+      <label for="phone">Phone</label>
+      <input type="tel" id="phone" name="phone" required>
+      <label for="password">Password (6+ characters)</label>
+      <input type="password" id="password" name="password" required minlength="6">
+      <div style="margin-top:18px">
+        <button class="btn btn-block" type="submit">Create account</button>
+      </div>
+    </form>
+    <p class="muted" style="margin-top:14px">Already have an account? <a href="{{ url_for('login') }}">Log in</a></p>
+  </div>
+</div>
+{% endblock %}
