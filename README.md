@@ -44,6 +44,29 @@ Postgres (production): set `DATABASE_URL`. SQLite is used otherwise.
   Returns `{payment_id, payment_url, amount, currency, status}`.
 - `GET /api/v1/payment/status?payment_id=...` — header `X-API-Key`.
 
+## Pesticide Shop Calculator auto-buy (webhook, no API key)
+
+The pesticide license server runs on PythonAnywhere free, which
+cannot call this gateway — so the direction is reversed:
+
+- `GET /buy/pesticide?plan=<monthly|yearly|lifetime>&ref=<purchase_ref>&device=<install_id>`
+  — public, no API key. The merchant (`PESTICIDE_MERCHANT_ID`) and
+  the prices (৳250 / ৳2,500 / ৳12,500, optional `PLAN_PRICES_BDT`
+  JSON override) are fixed server-side. Creates the payment with
+  invoice `PSC-<plan>-<ref>` and redirects to the normal checkout.
+- When a `PSC-` payment is marked paid, the gateway POSTs the
+  license server's `/v1/payment-callback` (`LICENSE_CALLBACK_URL`,
+  default `https://atikur.pythonanywhere.com/v1/payment-callback`)
+  with `{payment_id, purchase_ref, install_id, plan, amount,
+  trx_id}` and header `X-Webhook-Secret: <PAYMENT_WEBHOOK_SECRET>`,
+  up to 3 attempts. Only `PSC-` payments are webhook'd — never
+  other merchants'. The price table MUST match the license server's
+  copy; the callback rejects any amount mismatch.
+- Env vars (Render dashboard): `PESTICIDE_MERCHANT_ID` (the id of
+  the pesticide merchant account — create it in the dashboard first),
+  `PAYMENT_WEBHOOK_SECRET` (must match the same var on the license
+  server). Optional: `LICENSE_CALLBACK_URL`, `PLAN_PRICES_BDT`.
+
 ## SMS ingest (Android app)
 
 - `POST /api/sms` — headers `X-SMS-Secret: <SMS_INGEST_SECRET>` and
@@ -70,6 +93,9 @@ python3 test_local.py
 The test drives signup → dashboard → bKash number → API key →
 create-payment → checkout → SMS ingest (sample SMS) → TrxID verify
 → paid (idempotent) → status API → admin. See `test_local.py`.
+
+`python3 test_pesticide.py` tests the pesticide buy page + webhook
+(in-process, stub callback server, no live server needed).
 
 ## Still needed for live use
 

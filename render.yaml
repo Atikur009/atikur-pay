@@ -16,3 +16,7 @@ services:
         value: "01723502619"
       - key: DATABASE_URL
         sync: false
+      - key: PESTICIDE_MERCHANT_ID
+        sync: false
+      - key: PAYMENT_WEBHOOK_SECRET
+        sync: false

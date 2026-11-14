@@ -22,13 +22,33 @@ How it works:
 Merchants also get API keys to create payments from their own site
 or app (POST /api/v1/create-payment) and check status.
 
+Pesticide Shop Calculator auto-buy (2026-11-14): the pesticide license
+server runs on PythonAnywhere free, which CANNOT call this gateway
+(allowlist). So the direction is reversed — the license server hands
+the app a PUBLIC buy link, and this gateway webhooks the license
+server when the payment is paid:
+- GET /buy/pesticide?plan=<monthly|yearly|lifetime>&ref=<purchase_ref>
+  &device=<install_id> — no API key; the merchant + prices are fixed
+  server-side (PESTICIDE_MERCHANT_ID + the price table below). Creates
+  the payment (invoice "PSC-<plan>-<ref>") and redirects to checkout.
+- When a PSC payment is marked paid, the gateway POSTs
+  /v1/payment-callback on the license server (LICENSE_CALLBACK_URL,
+  header X-Webhook-Secret: PAYMENT_WEBHOOK_SECRET) with the purchase
+  ref + amount. Up to 3 attempts; failures never break checkout.
+  ONLY PSC-invoice payments are webhook'd — never other merchants'.
+
 Env vars:
     FLASK_SECRET_KEY, ADMIN_SECRET, SMS_INGEST_SECRET,
     PLATFORM_BKASH_NUMBER, DATABASE_URL (Postgres) or ATIKUR_PAY_DB.
+    PESTICIDE_MERCHANT_ID, PAYMENT_WEBHOOK_SECRET,
+    LICENSE_CALLBACK_URL, PLAN_PRICES_BDT (pesticide auto-buy only).
 """
 import json
 import os
 import secrets
+import time
+import urllib.error
+import urllib.request
 from functools import wraps
 
 from flask import (Flask, abort, flash, jsonify, redirect, render_template,
@@ -44,6 +64,35 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
 SMS_INGEST_SECRET = os.environ.get("SMS_INGEST_SECRET", "")
+
+# Pesticide Shop Calculator auto-buy: the merchant whose bKash number
+# customers pay, and the license-server webhook. The price table MUST
+# match the license server's copy — the callback rejects any payment
+# whose amount differs. Override via PLAN_PRICES_BDT (JSON).
+PESTICIDE_MERCHANT_ID = os.environ.get("PESTICIDE_MERCHANT_ID", "")
+PAYMENT_WEBHOOK_SECRET = os.environ.get("PAYMENT_WEBHOOK_SECRET", "")
+LICENSE_CALLBACK_URL = os.environ.get(
+    "LICENSE_CALLBACK_URL",
+    "https://atikur.pythonanywhere.com/v1/payment-callback")
+DEFAULT_PLAN_PRICES_BDT = {"monthly": 250, "yearly": 2500, "lifetime": 12500}
+
+
+def _plan_prices_bdt():
+    """BDT price per pesticide plan: defaults, overridden per-plan by
+    the PLAN_PRICES_BDT env JSON. A bad override never breaks the
+    server — invalid entries fall back to the defaults."""
+    prices = dict(DEFAULT_PLAN_PRICES_BDT)
+    raw = os.environ.get("PLAN_PRICES_BDT")
+    if raw:
+        try:
+            override = json.loads(raw)
+        except ValueError:
+            override = None
+        if isinstance(override, dict):
+            for plan, amount in override.items():
+                if plan in prices and isinstance(amount, (int, float)) and amount >= 1:
+                    prices[plan] = int(amount)
+    return prices
 
 # Payment methods shown at checkout. bKash is the only one that
 # verifies payments in this build (via SMS); the rest are stored
@@ -126,6 +175,29 @@ def get_payment(public_id_value):
         conn.close()
 
 
+def _create_payment(merchant_id, amount, currency, invoice, customer_ref,
+                    callback_url=None, pid=None):
+    """Insert one pending payment row; return its public id. Shared by
+    the merchant API, the dashboard test payment, and the pesticide
+    buy page — all three create payments the same way."""
+    pid = pid or public_id()
+    conn, pg = db.get_conn()
+    try:
+        db.execute(
+            conn, pg,
+            "INSERT INTO payments (id, public_id, merchant_id, amount, "
+            "currency, status, merchant_invoice_number, customer_ref, "
+            "callback_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, "
+            "'pending', ?, ?, ?, ?, ?)",
+            (db.new_id(), pid, merchant_id, amount, currency,
+             invoice, customer_ref, callback_url,
+             db.now_iso(), db.now_iso()))
+        db.commit(conn)
+    finally:
+        conn.close()
+    return pid
+
+
 def verify_trxid(payment, customer_phone, trx_id):
     """Match a customer-entered TrxID against stored bKash SMS.
 
@@ -186,6 +258,80 @@ def verify_trxid(payment, customer_phone, trx_id):
         return "paid"
     finally:
         conn.close()
+
+
+# ---------------- pesticide auto-buy webhook ----------------
+def _parse_psc_invoice(invoice):
+    """Parse a pesticide invoice "PSC-<plan>-<purchase_ref>" into
+    (plan, purchase_ref). Returns None for any other invoice — the
+    PSC- guard that keeps the webhook away from other merchants."""
+    if not invoice or not str(invoice).startswith("PSC-"):
+        return None
+    parts = str(invoice).split("-", 2)
+    if len(parts) != 3 or parts[1] not in DEFAULT_PLAN_PRICES_BDT:
+        return None
+    if not parts[2]:
+        return None
+    return parts[1], parts[2]
+
+
+_WEBHOOK_WARNED = False
+
+
+def _fire_license_webhook(payment, trx_id):
+    """Notify the pesticide license server that a PSC payment is paid.
+
+    Fires ONLY for PSC-invoice payments, up to 3 attempts (5s timeout,
+    1s/2s backoff). A 2xx response with body status paid/already_paid/
+    failed means "done" — anything else (network error, non-2xx, or a
+    2xx "pending" body meaning "issuance in flight, try again") is
+    retried. Failures are logged and NEVER raised: a failed webhook
+    must not break the checkout response. If the webhook secret or the
+    callback URL is unset, skip silently (warn once in the logs)."""
+    global _WEBHOOK_WARNED
+    parsed = _parse_psc_invoice(payment.get("merchant_invoice_number"))
+    if not parsed:
+        return
+    plan, purchase_ref = parsed
+    if not PAYMENT_WEBHOOK_SECRET or not LICENSE_CALLBACK_URL:
+        if not _WEBHOOK_WARNED:
+            _WEBHOOK_WARNED = True
+            print("WARNING: pesticide webhook not configured "
+                  "(PAYMENT_WEBHOOK_SECRET / LICENSE_CALLBACK_URL); "
+                  "paid PSC payments will NOT auto-activate.", flush=True)
+        return
+    body = json.dumps({
+        "payment_id": payment["public_id"],
+        "purchase_ref": purchase_ref,
+        "install_id": payment.get("customer_ref") or "",
+        "plan": plan,
+        "amount": payment["amount"],
+        "trx_id": trx_id,
+    }).encode("utf-8")
+    last_error = None
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(
+                LICENSE_CALLBACK_URL, data=body, method="POST")
+            req.add_header("Content-Type", "application/json")
+            req.add_header("X-Webhook-Secret", PAYMENT_WEBHOOK_SECRET)
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                try:
+                    data = json.loads(resp.read().decode("utf-8"))
+                except Exception:
+                    data = {}
+                if data.get("status") in ("paid", "already_paid", "failed"):
+                    return
+                last_error = "unexpected callback body: %r" % (data,)
+        except urllib.error.HTTPError as exc:
+            last_error = "HTTP %s" % exc.code
+        except Exception as exc:
+            last_error = "%s: %s" % (type(exc).__name__, exc)
+        if attempt < 2:
+            time.sleep(1 + attempt)
+    print("WARNING: pesticide webhook failed for %s after 3 attempts "
+          "(%s) — the purchase needs a manual key." % (
+              payment["public_id"], last_error), flush=True)
 
 
 # ---------------- public pages ----------------
@@ -415,19 +561,46 @@ def test_payment():
         flash("Test payment amount must be at least 10 BDT.", "error")
         return redirect(url_for("dashboard"))
     pid = public_id()
+    _create_payment(m["id"], amount, "BDT", "INV-" + pid,
+                    "test-payment", pid=pid)
+    return redirect(url_for("checkout", public_id=pid))
+
+
+# ---------------- pesticide buy page (public) ----------------
+@app.route("/buy/pesticide")
+def buy_pesticide():
+    """Public checkout link for the Pesticide Shop Calculator app. No
+    API key — the endpoint is safe because the merchant and the prices
+    are fixed server-side: only the three plans at the fixed BDT
+    prices, only for the pesticide merchant. Creates the payment and
+    redirects to the normal checkout page, where the shopkeeper pays
+    via bKash + TrxID as usual."""
+    plan = str(request.args.get("plan", "")).strip().lower()
+    ref = str(request.args.get("ref", "")).strip()
+    device = str(request.args.get("device", "")).strip()
+    if plan not in DEFAULT_PLAN_PRICES_BDT:
+        return jsonify({"error": "plan must be monthly, yearly or "
+                                 "lifetime."}), 400
+    if not ref or len(ref) > 64 or not device or len(device) > 64:
+        return jsonify({"error": "ref and device are required."}), 400
+    if not PESTICIDE_MERCHANT_ID:
+        return jsonify({"error": "Pesticide payments are not configured "
+                                 "on this server."}), 503
     conn, pg = db.get_conn()
     try:
-        db.execute(
-            conn, pg,
-            "INSERT INTO payments (id, public_id, merchant_id, amount, "
-            "currency, status, merchant_invoice_number, customer_ref, "
-            "created_at, updated_at) VALUES (?, ?, ?, ?, 'BDT', 'pending', "
-            "?, ?, ?, ?)",
-            (db.new_id(), pid, m["id"], amount, "INV-" + pid,
-             "test-payment", db.now_iso(), db.now_iso()))
-        db.commit(conn)
+        merchant = db.fetchone(conn, pg,
+                               "SELECT id FROM merchants WHERE id = ?",
+                               (PESTICIDE_MERCHANT_ID,))
     finally:
         conn.close()
+    if not merchant:
+        # A mistyped merchant id must fail loud here, not strand the
+        # shopkeeper at a checkout with no bKash number.
+        return jsonify({"error": "Pesticide payments are not configured "
+                                 "on this server."}), 503
+    amount = _plan_prices_bdt()[plan]
+    pid = _create_payment(PESTICIDE_MERCHANT_ID, amount, "BDT",
+                          "PSC-%s-%s" % (plan, ref), device)
     return redirect(url_for("checkout", public_id=pid))
 
 
@@ -472,7 +645,14 @@ def checkout_verify(public_id):
     phone = request.form.get("phone", "")
     trx_id = request.form.get("trx_id", "")
     result = verify_trxid(payment, phone, trx_id)
-    if result == "paid" or result == "already_paid":
+    if result == "paid":
+        # Freshly marked paid (this call flipped it) — notify the
+        # license server for PSC payments. Never breaks checkout: the
+        # webhook swallows its own failures.
+        _fire_license_webhook(get_payment(public_id) or payment,
+                              db.normalize_trx(trx_id))
+        return redirect(url_for("checkout_result", public_id=public_id))
+    if result == "already_paid":
         return redirect(url_for("checkout_result", public_id=public_id))
     if result == "not_found":
         flash("Payment not received yet. Check the TrxID and your phone "
@@ -591,20 +771,9 @@ def api_create_payment():
     pid = public_id()
     if not invoice:
         invoice = "INV-" + pid
-    conn, pg = db.get_conn()
-    try:
-        db.execute(
-            conn, pg,
-            "INSERT INTO payments (id, public_id, merchant_id, amount, "
-            "currency, status, merchant_invoice_number, customer_ref, "
-            "callback_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, "
-            "'pending', ?, ?, ?, ?, ?)",
-            (db.new_id(), pid, key["merchant_id"], amount, currency,
-             invoice, str(data.get("customerRef") or ""),
-             str(data.get("callbackURL") or ""), db.now_iso(), db.now_iso()))
-        db.commit(conn)
-    finally:
-        conn.close()
+    _create_payment(key["merchant_id"], amount, currency, invoice,
+                    str(data.get("customerRef") or ""),
+                    str(data.get("callbackURL") or ""), pid=pid)
     return jsonify({
         "payment_id": pid,
         "payment_url": url_for("checkout", public_id=pid, _external=True),
