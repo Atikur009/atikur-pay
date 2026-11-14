@@ -114,8 +114,14 @@ def main():
     check("sms ingest rejects bad secret", r.status_code == 401, r.status_code)
     r = s.post(BASE + "/api/sms",
                headers={"X-SMS-Secret": SMS_SECRET},
-               json=sms_body)
-    check("sms ingest rejects missing api key", r.status_code == 401,
+               json=dict(sms_body, trx_id="9HX7K2M4P2"))
+    check("sms ingest without api key falls back on single merchant",
+          r.status_code == 201
+          and r.json().get("status") == "stored", f"{r.status_code} {r.text}")
+    r = s.post(BASE + "/api/sms",
+               headers={"X-SMS-Secret": SMS_SECRET, "X-API-Key": "bad-key"},
+               json=dict(sms_body, trx_id="9HX7K2M4P3"))
+    check("sms ingest rejects wrong api key", r.status_code == 401,
           r.status_code)
 
     def status_of(payment_id):

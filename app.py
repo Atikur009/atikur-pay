@@ -566,6 +566,21 @@ def test_payment():
     return redirect(url_for("checkout", public_id=pid))
 
 
+def _single_merchant_id():
+    """The id of the gateway's only merchant, or "" unless exactly one
+    merchant exists. Used by the pesticide buy page and by SMS ingest
+    when no API key is supplied: with a single merchant there is no
+    one else the request could belong to."""
+    conn, pg = db.get_conn()
+    try:
+        rows = db.fetchall(conn, pg, "SELECT id FROM merchants LIMIT 2")
+    finally:
+        conn.close()
+    if len(rows) == 1:
+        return rows[0]["id"]
+    return ""
+
+
 def _resolve_pesticide_merchant_id():
     """The merchant id the pesticide buy page bills.
 
@@ -578,14 +593,7 @@ def _resolve_pesticide_merchant_id():
     """
     if PESTICIDE_MERCHANT_ID:
         return PESTICIDE_MERCHANT_ID
-    conn, pg = db.get_conn()
-    try:
-        rows = db.fetchall(conn, pg, "SELECT id FROM merchants LIMIT 2")
-    finally:
-        conn.close()
-    if len(rows) == 1:
-        return rows[0]["id"]
-    return ""
+    return _single_merchant_id()
 
 
 # ---------------- pesticide buy page (public) ----------------
@@ -711,18 +719,25 @@ def sms_ingest():
     if request.headers.get("X-SMS-Secret", "") != SMS_INGEST_SECRET:
         return jsonify({"error": "Invalid SMS ingest secret."}), 401
     key = request.headers.get("X-API-Key", "")
-    if not key:
-        return jsonify({"error": "Missing merchant API key."}), 401
-    conn, pg = db.get_conn()
-    try:
-        key_row = db.fetchone(
-            conn, pg,
-            "SELECT merchant_id FROM api_keys WHERE key_value = ? "
-            "AND revoked = 0", (key,))
-    finally:
-        conn.close()
-    if not key_row:
-        return jsonify({"error": "Invalid or revoked API key."}), 401
+    if key:
+        conn, pg = db.get_conn()
+        try:
+            key_row = db.fetchone(
+                conn, pg,
+                "SELECT merchant_id FROM api_keys WHERE key_value = ? "
+                "AND revoked = 0", (key,))
+        finally:
+            conn.close()
+        if not key_row:
+            return jsonify({"error": "Invalid or revoked API key."}), 401
+        merchant_id = key_row["merchant_id"]
+    else:
+        # No API key: only acceptable on a single-merchant gateway,
+        # where the SMS can only belong to that one merchant. The SMS
+        # secret (checked above) is still required.
+        merchant_id = _single_merchant_id()
+        if not merchant_id:
+            return jsonify({"error": "Missing merchant API key."}), 401
     data = request.get_json(silent=True) or {}
     sender = db.normalize_phone(data.get("sender", ""))
     trx_id = db.normalize_trx(data.get("trx_id", ""))
@@ -745,7 +760,7 @@ def sms_ingest():
             "INSERT INTO sms_transactions (id, merchant_id, method, "
             "sender_phone, amount, trx_id, sms_text, received_at, used, "
             "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
-            (db.new_id(), key_row["merchant_id"], method, sender, amount,
+            (db.new_id(), merchant_id, method, sender, amount,
              trx_id, str(data.get("sms_text", "")),
              str(data.get("received_at", "")), db.now_iso()))
         db.commit(conn)

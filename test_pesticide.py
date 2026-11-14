@@ -390,6 +390,76 @@ def main():
           and get_payment_row(r.get_json()["payment_id"])["merchant_invoice_number"]
           == "INV-" + r.get_json()["payment_id"], r.text)
 
+    print("== sms ingest: no API key, single merchant ==")
+    r = client.post("/api/sms",
+                    headers={"X-SMS-Secret": "test-sms-secret"},
+                    json={"sender": "01712345678", "amount": 250,
+                          "trx_id": "TRXNOKEY001", "sms_text": "test",
+                          "method": "bkash"})
+    check("no-key ingest 201", r.status_code == 201, r.text)
+    conn, pg = db.get_conn()
+    try:
+        sms_row = db.fetchone(conn, pg,
+                              "SELECT * FROM sms_transactions "
+                              "WHERE trx_id = ?", ("TRXNOKEY001",))
+    finally:
+        conn.close()
+    check("no-key SMS attributed to single merchant",
+          sms_row and sms_row["merchant_id"] == MERCHANT_ID, sms_row)
+    r = client.post("/api/sms",
+                    headers={"X-SMS-Secret": "test-sms-secret",
+                             "X-API-Key": "bogus-key"},
+                    json={"sender": "01712345678", "amount": 250,
+                          "trx_id": "TRXWRONGKEY", "sms_text": "test"})
+    check("wrong API key still 401", r.status_code == 401, r.status_code)
+    r = client.post("/api/sms",
+                    headers={"X-SMS-Secret": "wrong-secret"},
+                    json={"sender": "01712345678", "amount": 250,
+                          "trx_id": "TRXWRONGSECRET", "sms_text": "test"})
+    check("wrong SMS secret still 401", r.status_code == 401, r.status_code)
+    conn, pg = db.get_conn()
+    try:
+        db.execute(conn, pg,
+                   "INSERT INTO merchants (id, name, email, phone, "
+                   "password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                   ("MERCH-SECOND", "Second Shop", "second@local",
+                    "01700000002", "x", db.now_iso()))
+        db.commit(conn)
+    finally:
+        conn.close()
+    r = client.post("/api/sms",
+                    headers={"X-SMS-Secret": "test-sms-secret"},
+                    json={"sender": "01712345678", "amount": 250,
+                          "trx_id": "TRXTWOMERCH", "sms_text": "test"})
+    check("no-key + two merchants 401", r.status_code == 401, r.status_code)
+    conn, pg = db.get_conn()
+    try:
+        db.execute(conn, pg, "DELETE FROM merchants WHERE id = ?",
+                   ("MERCH-SECOND",))
+        db.commit(conn)
+    finally:
+        conn.close()
+
+    print("== sms ingest: no-key end-to-end (buy -> verify -> webhook) ==")
+    with STUB.lock:
+        STUB.posts = []
+        STUB.script = []
+    r = client.post("/api/sms",
+                    headers={"X-SMS-Secret": "test-sms-secret"},
+                    json={"sender": "01712345678", "amount": 250,
+                          "trx_id": "TRXE2ENOKEY", "sms_text": "test",
+                          "method": "bkash"})
+    check("e2e no-key ingest 201", r.status_code == 201, r.text)
+    r = client.get("/buy/pesticide?plan=monthly&ref=PUR-E2ENOKEY&device=DEV-E2E")
+    pid_e = r.location.rsplit("/pay/", 1)[-1]
+    r = pay_checkout(client, pid_e, "01712345678", "TRXE2ENOKEY")
+    check("e2e no-key verify pays",
+          r.status_code == 302 and get_payment_row(pid_e)["status"] == "paid",
+          r.status_code)
+    with STUB.lock:
+        check("e2e no-key webhook fired", len(STUB.posts) == 1,
+              len(STUB.posts))
+
     print("== buy endpoint: no merchants at all ==")
     conn, pg = db.get_conn()
     try:
