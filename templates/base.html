@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+{% if not hide_chrome %}
 <header class="nav">
   <div class="container nav-inner">
     <a class="logo" href="{{ url_for('index') }}" style="text-decoration:none">Atikur <span>Pay</span></a>
@@ -22,6 +23,7 @@
     </nav>
   </div>
 </header>
+{% endif %}
 <main>
   <div class="container">
     {% with messages = get_flashed_messages(with_categories=true) %}
@@ -32,10 +34,12 @@
   </div>
   {% block content %}{% endblock %}
 </main>
+{% if not hide_chrome %}
 <footer class="footer">
   <div class="container">
     Atikur Pay — Accept payments on your website &amp; app. No API key needed — payments are auto-verified by bKash SMS.
   </div>
 </footer>
+{% endif %}
 </body>
 </html>

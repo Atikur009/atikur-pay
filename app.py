@@ -261,6 +261,16 @@ def verify_trxid(payment, customer_phone, trx_id):
 
 
 # ---------------- pesticide auto-buy webhook ----------------
+# Android intent URL that re-opens the Pesticide Shop Calculator app
+# after a paid pesticide payment. Launched from the result page (auto
+# + button). Falls back to atikur.cyou when the app is not installed.
+PSC_APP_INTENT_URL = (
+    "intent://#Intent;action=android.intent.action.MAIN;"
+    "category=android.intent.category.LAUNCHER;"
+    "package=com.atikur.pesticideshop;"
+    "S.browser_fallback_url=https%3A%2F%2Fatikur.cyou;end")
+
+
 def _parse_psc_invoice(invoice):
     """Parse a pesticide invoice "PSC-<plan>-<purchase_ref>" into
     (plan, purchase_ref). Returns None for any other invoice — the
@@ -659,7 +669,7 @@ def checkout(public_id):
         "checkout.html", payment=payment,
         merchant_name=merchant["name"] if merchant else "Merchant",
         mfs_methods=MFS_METHODS, configured=configured,
-        bkash_number=bkash_number)
+        bkash_number=bkash_number, hide_chrome=True)
 
 
 @app.route("/pay/<public_id>/verify", methods=["POST"])
@@ -707,7 +717,11 @@ def checkout_result(public_id):
     payment = get_payment(public_id)
     if not payment:
         abort(404)
-    return render_template("result.html", payment=payment)
+    invoice = payment.get("merchant_invoice_number") or ""
+    is_pesticide = invoice.startswith("PSC-")
+    return render_template(
+        "result.html", payment=payment, hide_chrome=True,
+        is_pesticide=is_pesticide, app_intent_url=PSC_APP_INTENT_URL)
 
 
 # ---------------- SMS ingest (Android app) ----------------

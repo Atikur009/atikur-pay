@@ -22,6 +22,14 @@
     <p>Your payment of <strong>৳{{ '%.2f'|format(payment.amount) }} BDT</strong> is still pending verification.</p>
     <p><a class="btn" href="{{ url_for('checkout', public_id=payment.public_id) }}">Back to checkout</a></p>
   {% endif %}
+  {% if payment.status == 'paid' and is_pesticide %}
+  <div class="card" style="margin-top:20px;text-align:center">
+    <p style="font-size:18px"><strong>✅ লাইসেন্স চালু হয়েছে!</strong><br>অ্যাপে ফিরে যান — অ্যাপ নিজে নিজে খুলে যাবে।</p>
+    <p><a class="btn btn-block" href="{{ app_intent_url }}">📱 অ্যাপে ফিরুন</a></p>
+    <p class="muted">অ্যাপ না খুললে বাটনে ট্যাপ করুন, অথবা নিজে অ্যাপটি খুলুন — লাইসেন্স চালু হয়ে গেছে।</p>
+  </div>
+  <script>setTimeout(function(){ window.location.href = {{ app_intent_url|tojson }}; }, 2500);</script>
+  {% endif %}
   <p class="muted" style="margin-top:24px">Payment ID: <code>{{ payment.public_id }}</code></p>
 </div>
 {% endblock %}

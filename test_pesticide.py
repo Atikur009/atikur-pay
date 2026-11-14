@@ -460,6 +460,47 @@ def main():
         check("e2e no-key webhook fired", len(STUB.posts) == 1,
               len(STUB.posts))
 
+    print("== customer pages: no merchant chrome + app return link ==")
+    r = client.get("/buy/pesticide?plan=monthly&ref=PUR-NAVHIDE&device=DEV-NAV")
+    pid_n = r.location.rsplit("/pay/", 1)[-1]
+    r = client.get("/pay/" + pid_n)
+    body = r.get_data(as_text=True)
+    check("checkout 200", r.status_code == 200, r.status_code)
+    check("checkout hides API Docs link", "API Docs" not in body, body[:200])
+    check("checkout hides Log in link", ">Log in<" not in body, body[:200])
+    check("checkout hides Sign up link", "Sign up free" not in body,
+          body[:200])
+    check("checkout still shows bkash number", "01711111111" in body,
+          body[:200])
+    ingest_sms(client, "01712345678", 250, "TRXNAVHIDE01")
+    r = pay_checkout(client, pid_n, "01712345678", "TRXNAVHIDE01")
+    r = client.get("/pay/" + pid_n + "/result")
+    body = r.get_data(as_text=True)
+    check("result 200", r.status_code == 200, r.status_code)
+    check("result hides API Docs link", "API Docs" not in body, body[:200])
+    check("result hides Log in link", ">Log in<" not in body, body[:200])
+    check("result has return-to-app button", "অ্যাপে ফিরুন" in body,
+          body[:400])
+    check("result has app intent link",
+          "intent://" in body and "com.atikur.pesticideshop" in body,
+          body[:400])
+    r = client.post("/api/v1/create-payment",
+                    headers={"X-API-Key": API_KEY},
+                    json={"amount": 100, "merchantInvoiceNumber": "ORDER-NAV",
+                          "customerRef": "nav@local"})
+    check("non-psc create 201", r.status_code == 201, r.text)
+    pid_o = r.get_json()["payment_id"]
+    ingest_sms(client, "01712345678", 100, "TRXNAVHIDE02")
+    r = pay_checkout(client, pid_o, "01712345678", "TRXNAVHIDE02")
+    r = client.get("/pay/" + pid_o + "/result")
+    body = r.get_data(as_text=True)
+    check("non-psc result hides chrome", "API Docs" not in body, body[:200])
+    check("non-psc result has no app link",
+          "com.atikur.pesticideshop" not in body, body[:400])
+    r = client.get("/docs")
+    check("docs page keeps nav", "API Docs" in r.get_data(as_text=True),
+          r.status_code)
+
     print("== buy endpoint: no merchants at all ==")
     conn, pg = db.get_conn()
     try:
