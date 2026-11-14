@@ -566,6 +566,28 @@ def test_payment():
     return redirect(url_for("checkout", public_id=pid))
 
 
+def _resolve_pesticide_merchant_id():
+    """The merchant id the pesticide buy page bills.
+
+    PESTICIDE_MERCHANT_ID wins when set. Otherwise, when this gateway
+    has exactly ONE merchant, that merchant is used: this gateway was
+    built for Atikur's own apps, and a single-merchant install has no
+    one else the buy page could bill. With zero or several merchants
+    the fallback refuses (returns "") and the env var is required, so
+    a multi-merchant gateway can never bill the wrong merchant.
+    """
+    if PESTICIDE_MERCHANT_ID:
+        return PESTICIDE_MERCHANT_ID
+    conn, pg = db.get_conn()
+    try:
+        rows = db.fetchall(conn, pg, "SELECT id FROM merchants LIMIT 2")
+    finally:
+        conn.close()
+    if len(rows) == 1:
+        return rows[0]["id"]
+    return ""
+
+
 # ---------------- pesticide buy page (public) ----------------
 @app.route("/buy/pesticide")
 def buy_pesticide():
@@ -583,14 +605,15 @@ def buy_pesticide():
                                  "lifetime."}), 400
     if not ref or len(ref) > 64 or not device or len(device) > 64:
         return jsonify({"error": "ref and device are required."}), 400
-    if not PESTICIDE_MERCHANT_ID:
+    merchant_id = _resolve_pesticide_merchant_id()
+    if not merchant_id:
         return jsonify({"error": "Pesticide payments are not configured "
                                  "on this server."}), 503
     conn, pg = db.get_conn()
     try:
         merchant = db.fetchone(conn, pg,
                                "SELECT id FROM merchants WHERE id = ?",
-                               (PESTICIDE_MERCHANT_ID,))
+                               (merchant_id,))
     finally:
         conn.close()
     if not merchant:
@@ -599,7 +622,7 @@ def buy_pesticide():
         return jsonify({"error": "Pesticide payments are not configured "
                                  "on this server."}), 503
     amount = _plan_prices_bdt()[plan]
-    pid = _create_payment(PESTICIDE_MERCHANT_ID, amount, "BDT",
+    pid = _create_payment(merchant_id, amount, "BDT",
                           "PSC-%s-%s" % (plan, ref), device)
     return redirect(url_for("checkout", public_id=pid))
 

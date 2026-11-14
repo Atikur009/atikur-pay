@@ -183,6 +183,32 @@ def main():
           r.status_code == 200 and "01711111111" in r.text
           and "250" in r.text, r.status_code)
 
+    print("== checkout: platform bkash fallback ==")
+    conn, pg = db.get_conn()
+    try:
+        db.execute(conn, pg,
+                   "DELETE FROM merchant_methods WHERE merchant_id = ?",
+                   (MERCHANT_ID,))
+        db.commit(conn)
+    finally:
+        conn.close()
+    r = client.get("/pay/%s" % pid)
+    check("checkout shows platform number without saved method",
+          r.status_code == 200 and "01700000000" in r.text, r.status_code)
+    conn, pg = db.get_conn()
+    try:
+        db.execute(conn, pg,
+                   "INSERT INTO merchant_methods (id, merchant_id, method, "
+                   "credentials_json, is_active, created_at, updated_at) "
+                   "VALUES (?, ?, 'bkash', ?, 1, ?, ?)",
+                   (db.new_id(), MERCHANT_ID,
+                    json.dumps({"number": "01711111111",
+                                "account_name": "Pesticide Shop"}),
+                    db.now_iso(), db.now_iso()))
+        db.commit(conn)
+    finally:
+        conn.close()
+
     print("== buy endpoint: validation ==")
     check("bad plan 400", client.get(
         "/buy/pesticide?plan=weekly&ref=R1&device=D1").status_code == 400)
@@ -198,8 +224,31 @@ def main():
     print("== buy endpoint: merchant config ==")
     old_mid = gw.PESTICIDE_MERCHANT_ID
     gw.PESTICIDE_MERCHANT_ID = ""
-    check("unset merchant 503", client.get(
+    r = client.get("/buy/pesticide?plan=monthly&ref=R1&device=D1")
+    check("unset merchant + single merchant falls back 302",
+          r.status_code == 302, r.status_code)
+    check("fallback bills the single merchant",
+          get_payment_row(r.location.rsplit("/pay/", 1)[-1])["merchant_id"]
+          == MERCHANT_ID)
+    conn, pg = db.get_conn()
+    try:
+        db.execute(conn, pg,
+                   "INSERT INTO merchants (id, name, email, phone, "
+                   "password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                   ("MERCH-SECOND", "Second Shop", "second@local",
+                    "01700000002", "x", db.now_iso()))
+        db.commit(conn)
+    finally:
+        conn.close()
+    check("unset merchant + two merchants 503", client.get(
         "/buy/pesticide?plan=monthly&ref=R1&device=D1").status_code == 503)
+    conn, pg = db.get_conn()
+    try:
+        db.execute(conn, pg, "DELETE FROM merchants WHERE id = ?",
+                   ("MERCH-SECOND",))
+        db.commit(conn)
+    finally:
+        conn.close()
     gw.PESTICIDE_MERCHANT_ID = "MERCH-DOES-NOT-EXIST"
     check("nonexistent merchant 503", client.get(
         "/buy/pesticide?plan=monthly&ref=R1&device=D1").status_code == 503)
@@ -340,6 +389,19 @@ def main():
           r.status_code == 201
           and get_payment_row(r.get_json()["payment_id"])["merchant_invoice_number"]
           == "INV-" + r.get_json()["payment_id"], r.text)
+
+    print("== buy endpoint: no merchants at all ==")
+    conn, pg = db.get_conn()
+    try:
+        db.execute(conn, pg, "DELETE FROM merchants")
+        db.execute(conn, pg, "DELETE FROM api_keys")
+        db.execute(conn, pg, "DELETE FROM merchant_methods")
+        db.commit(conn)
+    finally:
+        conn.close()
+    gw.PESTICIDE_MERCHANT_ID = ""
+    check("unset merchant + zero merchants 503", client.get(
+        "/buy/pesticide?plan=monthly&ref=R1&device=D1").status_code == 503)
 
     print()
     print("PASSED %d  FAILED %d" % (len(passed), len(failed)))
